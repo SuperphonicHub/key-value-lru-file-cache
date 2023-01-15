@@ -9,7 +9,6 @@
 [![Semantic Release][semantic-release-img]][semantic-release-url]
 
 Todo:
-* Replace all "ryansonshine" with "fivecar"
 * Replace all "my-package" with your package name
 * Add NPM_TOKEN as a secret in the new repo
 * Use branches for changes you don't plan to launch. As soon as you merge to main, it'll release onto NPM.
