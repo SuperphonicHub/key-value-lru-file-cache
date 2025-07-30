@@ -110,5 +110,8 @@
       "@semantic-release/npm",
       "@semantic-release/github"
     ]
+  },
+  "dependencies": {
+    "zod": "^4.0.14"
   }
 }
