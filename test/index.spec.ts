@@ -278,4 +278,69 @@ describe("KeyValueCache", () => {
     expect(dictionary[newKey]).toContain('"lastAccessed"');
     expect(dictionary[oldKey]).toBeUndefined();
   });
+
+  it("delete awaits to boot", async () => {
+    let getAllKeysTimestamp = 0;
+    let getKeyForTimestamp = 0;
+
+    let signalResolve!: () => void;
+    const signal = new Promise<void>(resolve => {
+      signalResolve = resolve;
+    });
+
+    adapter.getAllKeys = jest.fn().mockImplementation(async () => {
+      await signal;
+      getAllKeysTimestamp = getTimestamp();
+      console.log("getAllKeysTimestamp", getAllKeysTimestamp);
+      return [];
+    });
+
+    adapter.getKeyFor = jest
+      .fn()
+      .mockImplementation(async (_params: TestParams) => {
+        getKeyForTimestamp = getTimestamp();
+        console.log("getKeyForTimestamp", getKeyForTimestamp);
+        const result = await Promise.resolve(null);
+        return result;
+      });
+
+    const newCache = new KeyValueCache(adapter); // starts boot
+    const deletePromise = newCache.delete({ id: "test" });
+
+    signalResolve();
+
+    const result = await deletePromise;
+
+    expect(result).toBe(false);
+    expect(getAllKeysTimestamp).toBeGreaterThan(0);
+    expect(getKeyForTimestamp).toBeGreaterThan(0);
+    expect(getKeyForTimestamp).toBeGreaterThan(getAllKeysTimestamp);
+  });
+
+  it("delete returns false if key is falsy", async () => {
+    const result = await cache.delete({ id: MOCK_NOT_FOUND_KEY });
+    expect(result).toBe(false);
+  });
+
+  it("delete returns false if value is falsy", async () => {
+    const result = await cache.delete({ id: MOCK_NULL_VALUE_KEY });
+    expect(result).toBe(false);
+  });
+
+  it("delete returns true and unlinks file when all conditions are met", async () => {
+    const lastAccessed = Date.now() - 1;
+    const value = `{ "filePath": "${MOCK_FILE_PATH}", "lastAccessed": ${lastAccessed} }`;
+    const key = `${MOCK_PREFIX}:TheKey`;
+    dictionary[key] = value;
+    const newCache = new KeyValueCache(adapter); // New cache to account for the entry added above.
+
+    const result = await newCache.delete({ id: key });
+
+    expect(result).toBe(true);
+    expect(dictionary[key]).toBeUndefined();
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(adapter.fileUnlink).toHaveBeenCalledWith(MOCK_FILE_PATH);
+    expect(await newCache.getCurrentEntriesCount()).toBe(0);
+    expect(await newCache.getCurrentDiskSize()).toBe(0);
+  });
 });
