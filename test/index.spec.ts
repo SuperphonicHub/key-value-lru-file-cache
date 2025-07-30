@@ -343,4 +343,61 @@ describe("KeyValueCache", () => {
     expect(await newCache.getCurrentEntriesCount()).toBe(0);
     expect(await newCache.getCurrentDiskSize()).toBe(0);
   });
+
+  it("cleanExpiredEntries awaits to boot", async () => {
+    const lastAccessed = Date.now() - 1;
+    const value = `{ "filePath": "${MOCK_FILE_PATH}", "lastAccessed": ${lastAccessed} }`;
+    const key = `${MOCK_PREFIX}:TheKey`;
+    dictionary[key] = value;
+
+    let getAllKeysTimestamp = 0;
+    let getKeyForTimestamp = 0;
+
+    let signalResolve!: () => void;
+    const signal = new Promise<void>(resolve => {
+      signalResolve = resolve;
+    });
+
+    adapter.getAllKeys = jest.fn().mockImplementation(async () => {
+      await signal;
+      getAllKeysTimestamp = getTimestamp();
+      console.log("getAllKeysTimestamp", getAllKeysTimestamp);
+      return Object.keys(dictionary);
+    });
+
+    adapter.getValueForKey = jest
+      .fn()
+      .mockImplementation(async (key: string) => {
+        getKeyForTimestamp = getTimestamp();
+        console.log("getKeyForTimestamp", getKeyForTimestamp);
+        const result = key === MOCK_NULL_VALUE_KEY ? null : dictionary[key];
+        return Promise.resolve(result);
+      });
+
+    const newCache = new KeyValueCache(adapter); // starts boot
+    const cleanExpiredEntriesPromise = newCache.cleanExpiredEntries();
+
+    signalResolve();
+
+    const result = await cleanExpiredEntriesPromise;
+
+    expect(result).toBe(false);
+    expect(getAllKeysTimestamp).toBeGreaterThan(0);
+    expect(getKeyForTimestamp).toBeGreaterThan(0);
+    expect(getKeyForTimestamp).toBeGreaterThan(getAllKeysTimestamp);
+  });
+
+  it("cleanExpiredEntries cleans up expired entries", async () => {
+    const lastAccessed = Date.now() - EVICTION_MILLIS - 1;
+    const value = `{ "filePath": "${MOCK_FILE_PATH}", "lastAccessed": ${lastAccessed} }`;
+    const key = `${MOCK_PREFIX}:TheKey`;
+    dictionary[key] = value;
+
+    const result = await cache.cleanExpiredEntries();
+    expect(result).toBe(true);
+    const keys = Object.keys(dictionary);
+    expect(keys).not.toContain(key);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(adapter.fileUnlink).toHaveBeenCalledWith(MOCK_FILE_PATH);
+  });
 });
