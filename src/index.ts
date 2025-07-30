@@ -113,16 +113,20 @@ export class KeyValueCache<TKeyParams> {
       return null;
     }
 
-    valueEntry.lastAccessed = Date.now();
-
-    await this.adapter.setValueForKey(key, JSON.stringify(valueEntry));
-
     const evictionThreshold = Date.now() - this.adapter.evictionMillis;
-    const cleaned = await this.cleanExpiredEntry(key, evictionThreshold);
+    const cleaned = await this.cleanExpiredEntry(
+      key,
+      evictionThreshold,
+      valueEntry
+    );
 
     if (cleaned) {
       return null;
     }
+
+    valueEntry.lastAccessed = Date.now();
+
+    await this.adapter.setValueForKey(key, JSON.stringify(valueEntry));
 
     return valueEntry.filePath;
   }
@@ -142,7 +146,7 @@ export class KeyValueCache<TKeyParams> {
     const key = await this.adapter.getKeyFor(params);
 
     if (!key) {
-      return;
+      return false;
     }
 
     const newEntry: ValueEntry = {
@@ -151,6 +155,13 @@ export class KeyValueCache<TKeyParams> {
     };
 
     await this.adapter.setValueForKey(key, JSON.stringify(newEntry));
+    this.entriesCount++;
+
+    const exists = await this.adapter.fileExists(filePath);
+    if (exists) {
+      const fileSize = await this.adapter.fileSize(filePath);
+      this.diskSize += fileSize;
+    }
 
     if (this.entriesCount >= this.adapter.maxEntries) {
       await this.cleanUpCount();
@@ -159,6 +170,8 @@ export class KeyValueCache<TKeyParams> {
     if (this.diskSize >= this.adapter.maxCacheSize) {
       await this.cleanUpDiskSize();
     }
+
+    return true;
   }
 
   /**
@@ -178,7 +191,31 @@ export class KeyValueCache<TKeyParams> {
       return false;
     }
 
+    const value = await this.adapter.getValueForKey(key);
+
+    if (!value) {
+      return false;
+    }
+
     await this.adapter.deleteKeyValue(key);
+    this.entriesCount--;
+
+    if (!value) {
+      return true;
+    }
+
+    try {
+      const { filePath } = zodValueEntry.parse(JSON.parse(value));
+      const exists = await this.adapter.fileExists(filePath);
+      if (exists) {
+        const fileSize = await this.adapter.fileSize(filePath);
+        this.diskSize -= fileSize;
+        await this.adapter.fileUnlink(filePath);
+      }
+    } catch (err) {
+      // Do nothing
+    }
+
     return true;
   }
 
@@ -219,17 +256,30 @@ export class KeyValueCache<TKeyParams> {
 
     const ourKeyValues = await this.getAllByOldestFirst();
     const evictionThreshold = Date.now() - this.adapter.evictionMillis;
-    const promises: Promise<boolean>[] = [];
 
     for (const { key, valueEntry } of ourKeyValues) {
       if (this.entriesCount <= this.adapter.maxEntries) {
         break;
       }
 
-      promises.push(this.cleanExpiredEntry(key, evictionThreshold, valueEntry));
+      await this.cleanExpiredEntry(key, evictionThreshold, valueEntry);
+    }
+  }
+
+  async getCurrentEntriesCount() {
+    if (!this.isBooted) {
+      await this.bootPromise;
     }
 
-    await Promise.all(promises);
+    return this.entriesCount;
+  }
+
+  async getCurrentDiskSize() {
+    if (!this.isBooted) {
+      await this.bootPromise;
+    }
+
+    return this.diskSize;
   }
 
   private async cleanUpDiskSize() {
@@ -245,17 +295,14 @@ export class KeyValueCache<TKeyParams> {
 
     const ourKeyValues = await this.getAllByOldestFirst();
     const evictionThreshold = Date.now() - this.adapter.evictionMillis;
-    const promises: Promise<boolean>[] = [];
 
     for (const { key, valueEntry } of ourKeyValues) {
       if (this.diskSize <= this.adapter.maxCacheSize) {
         break;
       }
 
-      promises.push(this.cleanExpiredEntry(key, evictionThreshold, valueEntry));
+      await this.cleanExpiredEntry(key, evictionThreshold, valueEntry);
     }
-
-    await Promise.all(promises);
   }
 
   private async cleanExpiredEntry(
@@ -304,9 +351,8 @@ export class KeyValueCache<TKeyParams> {
   }
 
   private async getOurKeys() {
-    return (await this.adapter.getAllKeys()).filter(key =>
-      key.startsWith(this.adapter.prefix)
-    );
+    const allKeys = await this.adapter.getAllKeys();
+    return allKeys.filter(key => key.startsWith(this.adapter.prefix));
   }
 
   private async getOurKeysCount() {
