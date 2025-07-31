@@ -104,8 +104,9 @@ export class KeyValueCache<TKeyParams> {
     } catch (err) {
       const isDeleted = await this.adapter.deleteKeyValue(key);
       if (isDeleted) {
-        this.entriesCount--;
+        this.safeDecrementEntriesCount();
       }
+      // We can't decrement the diskSize because the JSON is corrupted.
 
       return null;
     }
@@ -115,8 +116,9 @@ export class KeyValueCache<TKeyParams> {
     if (!exists) {
       const isDeleted = await this.adapter.deleteKeyValue(key);
       if (isDeleted) {
-        this.entriesCount--;
+        this.safeDecrementEntriesCount();
       }
+      // We can't decrement the diskSize because the file does not exist.
 
       return null;
     }
@@ -220,10 +222,11 @@ export class KeyValueCache<TKeyParams> {
       return false;
     }
 
-    this.entriesCount--;
+    this.safeDecrementEntriesCount();
 
     if (!value) {
       return true;
+      // We can't decrement the diskSize because the value is falsy.
     }
 
     try {
@@ -233,11 +236,12 @@ export class KeyValueCache<TKeyParams> {
         const fileSize = await this.adapter.fileSize(filePath);
         const isUnlinked = await this.adapter.fileUnlink(filePath);
         if (isUnlinked) {
-          this.diskSize -= fileSize;
+          this.safeDecrementDiskSize(fileSize);
         }
       }
     } catch (err) {
       // Do nothing
+      // We can't decrement the diskSize because the JSON is corrupted.
     }
 
     return true;
@@ -343,14 +347,14 @@ export class KeyValueCache<TKeyParams> {
         return false;
       }
 
-      this.entriesCount--;
+      this.safeDecrementEntriesCount();
 
       const exists = await this.adapter.fileExists(filePath);
       if (exists) {
         const fileSize = await this.adapter.fileSize(filePath);
         const isUnlinked = await this.adapter.fileUnlink(filePath);
         if (isUnlinked) {
-          this.diskSize -= fileSize;
+          this.safeDecrementDiskSize(fileSize);
         }
       }
 
@@ -385,8 +389,9 @@ export class KeyValueCache<TKeyParams> {
       } catch (err) {
         const isDeleted = await this.adapter.deleteKeyValue(key);
         if (isDeleted) {
-          this.entriesCount--;
+          this.safeDecrementEntriesCount();
         }
+        // We can't decrement the diskSize because the JSON is corrupted.
         continue;
       }
 
@@ -396,8 +401,9 @@ export class KeyValueCache<TKeyParams> {
       } else {
         const isDeleted = await this.adapter.deleteKeyValue(key);
         if (isDeleted) {
-          this.entriesCount--;
+          this.safeDecrementEntriesCount();
         }
+        // We can't decrement the diskSize because the file does not exist.
       }
     }
     return totalSize;
@@ -420,8 +426,9 @@ export class KeyValueCache<TKeyParams> {
         } catch (err) {
           const isDeleted = await this.adapter.deleteKeyValue(key);
           if (isDeleted) {
-            this.entriesCount--;
+            this.safeDecrementEntriesCount();
           }
+          // We can't decrement the diskSize because the JSON is corrupted.
           return null;
         }
       })
@@ -434,5 +441,19 @@ export class KeyValueCache<TKeyParams> {
       .sort((a, b) => a.valueEntry.lastAccessed - b.valueEntry.lastAccessed);
 
     return sortedAndFiltered;
+  }
+
+  private safeDecrementEntriesCount() {
+    // Preventing failures and bugs to decrement below 0.
+    if (this.entriesCount > 0) {
+      this.entriesCount--;
+    }
+  }
+
+  private safeDecrementDiskSize(size: number) {
+    // Preventing failures and bugs to decrement below 0.
+    if (this.diskSize >= size) {
+      this.diskSize -= size;
+    }
   }
 }
