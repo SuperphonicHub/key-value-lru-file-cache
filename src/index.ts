@@ -82,10 +82,7 @@ export class KeyValueCache<TKeyParams> {
    * @returns A promise that resolves to the value for the given key params or null if the value can't be retrieved.
    */
   async get(params: TKeyParams) {
-    if (!this.isBooted) {
-      await this.bootPromise;
-    }
-
+    await this.ensureBooted();
     const key = await this.adapter.getKeyFor(params);
 
     if (!key) {
@@ -150,10 +147,7 @@ export class KeyValueCache<TKeyParams> {
    * @returns A promise that resolves to a boolean indicating if the value was put.
    */
   async put(params: TKeyParams, filePath: string) {
-    if (!this.isBooted) {
-      await this.bootPromise;
-    }
-
+    await this.ensureBooted();
     const key = await this.adapter.getKeyFor(params);
 
     if (!key) {
@@ -200,10 +194,7 @@ export class KeyValueCache<TKeyParams> {
    * @returns A promise that resolves to a boolean indicating if the value was deleted.
    */
   async delete(params: TKeyParams) {
-    if (!this.isBooted) {
-      await this.bootPromise;
-    }
-
+    await this.ensureBooted();
     const key = await this.adapter.getKeyFor(params);
 
     if (!key) {
@@ -231,14 +222,7 @@ export class KeyValueCache<TKeyParams> {
 
     try {
       const { filePath } = zodValueEntry.parse(JSON.parse(value));
-      const exists = await this.adapter.fileExists(filePath);
-      if (exists) {
-        const fileSize = await this.adapter.fileSize(filePath);
-        const isUnlinked = await this.adapter.fileUnlink(filePath);
-        if (isUnlinked) {
-          this.safeDecrementDiskSize(fileSize);
-        }
-      }
+      await this.tryDecrementDiskSize(filePath);
     } catch (err) {
       // Do nothing
       // We can't decrement the diskSize because the JSON is corrupted.
@@ -255,10 +239,7 @@ export class KeyValueCache<TKeyParams> {
    * @returns A promise that resolves to a boolean indicating if any entries were cleaned up.
    */
   async cleanExpiredEntries(): Promise<boolean> {
-    if (!this.isBooted) {
-      await this.bootPromise;
-    }
-
+    await this.ensureBooted();
     const ourKeyValues = await this.getAllByOldestFirst();
     const evictionThreshold = Date.now() - this.adapter.evictionMillis;
     const promises: Promise<boolean>[] = [];
@@ -272,10 +253,7 @@ export class KeyValueCache<TKeyParams> {
   }
 
   private async cleanUpCount() {
-    if (!this.isBooted) {
-      await this.bootPromise;
-    }
-
+    await this.ensureBooted();
     const countToClean = this.entriesCount - this.adapter.maxEntries;
 
     if (countToClean <= 0) {
@@ -295,26 +273,17 @@ export class KeyValueCache<TKeyParams> {
   }
 
   async getCurrentEntriesCount() {
-    if (!this.isBooted) {
-      await this.bootPromise;
-    }
-
+    await this.ensureBooted();
     return this.entriesCount;
   }
 
   async getCurrentDiskSize() {
-    if (!this.isBooted) {
-      await this.bootPromise;
-    }
-
+    await this.ensureBooted();
     return this.diskSize;
   }
 
   private async cleanUpDiskSize() {
-    if (!this.isBooted) {
-      await this.bootPromise;
-    }
-
+    await this.ensureBooted();
     const sizeToClean = this.diskSize - this.adapter.maxCacheSize;
 
     if (sizeToClean <= 0) {
@@ -348,16 +317,7 @@ export class KeyValueCache<TKeyParams> {
       }
 
       this.safeDecrementEntriesCount();
-
-      const exists = await this.adapter.fileExists(filePath);
-      if (exists) {
-        const fileSize = await this.adapter.fileSize(filePath);
-        const isUnlinked = await this.adapter.fileUnlink(filePath);
-        if (isUnlinked) {
-          this.safeDecrementDiskSize(fileSize);
-        }
-      }
-
+      await this.tryDecrementDiskSize(filePath);
       return true;
     }
 
@@ -454,6 +414,23 @@ export class KeyValueCache<TKeyParams> {
     // Preventing failures and bugs to decrement below 0.
     if (this.diskSize >= size) {
       this.diskSize -= size;
+    }
+  }
+
+  private async tryDecrementDiskSize(filePath: string) {
+    const exists = await this.adapter.fileExists(filePath);
+    if (exists) {
+      const fileSize = await this.adapter.fileSize(filePath);
+      const isUnlinked = await this.adapter.fileUnlink(filePath);
+      if (isUnlinked) {
+        this.safeDecrementDiskSize(fileSize);
+      }
+    }
+  }
+
+  private async ensureBooted(): Promise<void> {
+    if (!this.isBooted) {
+      await this.bootPromise;
     }
   }
 }
