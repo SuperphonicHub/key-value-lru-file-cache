@@ -38,14 +38,14 @@ export interface KeyValueCacheAdapter<TKeyParams> {
 
   // KeyValue Adapter
   getValueForKey(key: string): Promise<string | null>;
-  setValueForKey(key: string, value: string): Promise<void>;
-  deleteKeyValue(key: string): Promise<void>;
+  setValueForKey(key: string, value: string): Promise<boolean>;
+  deleteKeyValue(key: string): Promise<boolean>;
   getAllKeys(): Promise<string[]>;
   getKeyFor(params: TKeyParams): Promise<string | null>;
 
   // File System Adapter
   fileExists(path: string): Promise<boolean>;
-  fileUnlink(path: string): Promise<void>;
+  fileUnlink(path: string): Promise<boolean>;
   fileSize(path: string): Promise<number>;
 }
 
@@ -102,14 +102,22 @@ export class KeyValueCache<TKeyParams> {
     try {
       valueEntry = zodValueEntry.parse(JSON.parse(value));
     } catch (err) {
-      await this.adapter.deleteKeyValue(key);
+      const isDeleted = await this.adapter.deleteKeyValue(key);
+      if (isDeleted) {
+        this.entriesCount--;
+      }
+
       return null;
     }
 
     const exists = await this.adapter.fileExists(valueEntry.filePath);
 
     if (!exists) {
-      await this.adapter.deleteKeyValue(key);
+      const isDeleted = await this.adapter.deleteKeyValue(key);
+      if (isDeleted) {
+        this.entriesCount--;
+      }
+
       return null;
     }
 
@@ -126,6 +134,7 @@ export class KeyValueCache<TKeyParams> {
 
     valueEntry.lastAccessed = Date.now();
 
+    // No need to increment entriesCount or diskSize here, because we're just updating lastAccessed.
     await this.adapter.setValueForKey(key, JSON.stringify(valueEntry));
 
     return valueEntry.filePath;
@@ -154,7 +163,15 @@ export class KeyValueCache<TKeyParams> {
       lastAccessed: Date.now(),
     };
 
-    await this.adapter.setValueForKey(key, JSON.stringify(newEntry));
+    const isSet = await this.adapter.setValueForKey(
+      key,
+      JSON.stringify(newEntry)
+    );
+
+    if (!isSet) {
+      return false;
+    }
+
     this.entriesCount++;
 
     const exists = await this.adapter.fileExists(filePath);
@@ -197,7 +214,12 @@ export class KeyValueCache<TKeyParams> {
       return false;
     }
 
-    await this.adapter.deleteKeyValue(key);
+    const isDeleted = await this.adapter.deleteKeyValue(key);
+
+    if (!isDeleted) {
+      return false;
+    }
+
     this.entriesCount--;
 
     if (!value) {
@@ -209,8 +231,10 @@ export class KeyValueCache<TKeyParams> {
       const exists = await this.adapter.fileExists(filePath);
       if (exists) {
         const fileSize = await this.adapter.fileSize(filePath);
-        this.diskSize -= fileSize;
-        await this.adapter.fileUnlink(filePath);
+        const isUnlinked = await this.adapter.fileUnlink(filePath);
+        if (isUnlinked) {
+          this.diskSize -= fileSize;
+        }
       }
     } catch (err) {
       // Do nothing
@@ -308,40 +332,26 @@ export class KeyValueCache<TKeyParams> {
   private async cleanExpiredEntry(
     key: string,
     evictionThreshold: number,
-    valueEntry?: ValueEntry
+    valueEntry: ValueEntry
   ): Promise<boolean> {
-    let internalValue: ValueEntry;
+    if (valueEntry.lastAccessed < evictionThreshold) {
+      const { filePath } = valueEntry;
 
-    if (valueEntry) {
-      internalValue = valueEntry;
-    } else {
-      const value = await this.adapter.getValueForKey(key);
+      const isDeleted = await this.adapter.deleteKeyValue(key);
 
-      if (!value) {
+      if (!isDeleted) {
         return false;
       }
 
-      try {
-        internalValue = zodValueEntry.parse(JSON.parse(value));
-      } catch (err) {
-        await this.adapter.deleteKeyValue(key);
-        return false;
-      }
-    }
-
-    if (internalValue.lastAccessed < evictionThreshold) {
-      const { filePath } = internalValue;
-
-      await this.adapter.deleteKeyValue(key);
       this.entriesCount--;
 
       const exists = await this.adapter.fileExists(filePath);
       if (exists) {
         const fileSize = await this.adapter.fileSize(filePath);
-        return this.adapter.fileUnlink(filePath).then(() => {
+        const isUnlinked = await this.adapter.fileUnlink(filePath);
+        if (isUnlinked) {
           this.diskSize -= fileSize;
-          return true;
-        });
+        }
       }
 
       return true;
@@ -373,7 +383,10 @@ export class KeyValueCache<TKeyParams> {
       try {
         valueEntry = zodValueEntry.parse(JSON.parse(value));
       } catch (err) {
-        await this.adapter.deleteKeyValue(key);
+        const isDeleted = await this.adapter.deleteKeyValue(key);
+        if (isDeleted) {
+          this.entriesCount--;
+        }
         continue;
       }
 
@@ -381,7 +394,10 @@ export class KeyValueCache<TKeyParams> {
       if (exists) {
         totalSize += await this.adapter.fileSize(valueEntry.filePath);
       } else {
-        await this.adapter.deleteKeyValue(key);
+        const isDeleted = await this.adapter.deleteKeyValue(key);
+        if (isDeleted) {
+          this.entriesCount--;
+        }
       }
     }
     return totalSize;
@@ -402,7 +418,10 @@ export class KeyValueCache<TKeyParams> {
           const valueEntry = zodValueEntry.parse(JSON.parse(value));
           return { key, valueEntry };
         } catch (err) {
-          await this.adapter.deleteKeyValue(key);
+          const isDeleted = await this.adapter.deleteKeyValue(key);
+          if (isDeleted) {
+            this.entriesCount--;
+          }
           return null;
         }
       })
