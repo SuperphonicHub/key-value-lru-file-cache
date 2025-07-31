@@ -1,7 +1,7 @@
 {
-  "name": "my-package",
-  "version": "0.0.0-development",
-  "description": "A template for creating npm packages using TypeScript and VSCode",
+  "name": "key-value-lru-file-cache",
+  "version": "0.0.1-alpha.0",
+  "description": "A key-value LRU file cache",
   "main": "./lib/index.js",
   "files": [
     "lib/**/*"
@@ -19,24 +19,26 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/fivecar/my-package.git"
+    "url": "git+https://github.com/SuperphonicHub/key-value-lru-file-cache.git"
   },
   "license": "MIT",
   "author": {
-    "name": "Philip Su",
-    "email": "39933441+fivecar@users.noreply.github.com",
-    "url": "https://github.com/fivecar"
+    "name": "Guilherme Scotti",
+    "url": "https://github.com/GuilhermeScotti"
   },
   "engines": {
     "node": ">=20.11.1"
   },
   "keywords": [
-    "stuff"
+    "key-value",
+    "lru",
+    "file",
+    "cache"
   ],
   "bugs": {
-    "url": "https://github.com/fivecar/my-package/issues"
+    "url": "https://github.com/SuperphonicHub/key-value-lru-file-cache/issues"
   },
-  "homepage": "https://github.com/fivecar/my-package#readme",
+  "homepage": "https://github.com/SuperphonicHub/key-value-lru-file-cache#readme",
   "devDependencies": {
     "@ryansonshine/commitizen": "^4.2.8",
     "@ryansonshine/cz-conventional-changelog": "^3.3.4",
