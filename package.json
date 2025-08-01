@@ -1,6 +1,6 @@
 {
   "name": "key-value-lru-file-cache",
-  "version": "0.0.1-alpha.0",
+  "version": "0.1.0",
   "description": "A key-value LRU file cache",
   "main": "./lib/index.js",
   "files": [
