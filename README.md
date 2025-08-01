@@ -27,7 +27,7 @@ import { KeyValueCache } from "key-value-lru-file-cache";
 import MMKV from "react-native-mmkv";
 import ReactNativeBlobUtil from "react-native-blob-util";
 
-// Example key parameters type
+// Example key parameters type (or just use a primitive)
 interface ImageCacheKey {
   remoteImgPath: string;
   width: number;
