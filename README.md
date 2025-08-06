@@ -8,6 +8,15 @@
 [![Commitizen Friendly][commitizen-img]][commitizen-url]
 [![Semantic Release][semantic-release-img]][semantic-release-url]
 
+<br>
+<p align="center">
+  <img src="https://superphonic.fm/favicons/favicon-96x96.png" alt="Superphonic Logo" width="40"/>
+</p>
+<p align="center">
+  This package is used by: 
+  <a href="https://superphonic.fm" target="_blank">Superphonic</a>
+</p>
+
 ## Install
 
 ```bash
@@ -175,3 +184,4 @@ new KeyValueCache<TKeyParams>(adapter: KeyValueCacheAdapter<TKeyParams>)
 [semantic-release-url]: https://github.com/semantic-release/semantic-release
 [commitizen-img]: https://img.shields.io/badge/commitizen-friendly-brightgreen.svg
 [commitizen-url]: http://commitizen.github.io/cz-cli/
+[superphonic-site]: https://superphonic.fm/favicons/favicon-96x96.png
