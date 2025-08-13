@@ -32,7 +32,7 @@ yarn add key-value-lru-file-cache
 ## Example
 
 ```TS
-import { KeyValueCache } from "key-value-lru-file-cache";
+import { getCache } from "key-value-lru-file-cache";
 import MMKV from "react-native-mmkv";
 import ReactNativeBlobUtil from "react-native-blob-util";
 
@@ -44,15 +44,15 @@ interface ImageCacheKey {
 }
 
 // Create the cache instance
-const imageCache = new KeyValueCache<ImageCacheKey>({
+const imageCache = getCache({
   prefix: "IMG_RESIZED",
   evictionMillis: 7 * 24 * 60 * 60 * 1000, // 1 week
   maxEntries: 1000,
   maxCacheSize: 300 * 1024 * 1024, // 300MB
 
   // Key/value storage using MMKV
-  getValueForKey: async key => MMKV.getString(key) ?? null,
-  setValueForKey: async (key, value) => {
+  getValue: async key => MMKV.getString(key) ?? null,
+  setValue: async (key, value) => {
     try {
       MMKV.set(key, value);
       return true;
@@ -60,7 +60,7 @@ const imageCache = new KeyValueCache<ImageCacheKey>({
       return false;
     }
   },
-  deleteKeyValue: async key => {
+  delete: async key => {
     try {
       MMKV.delete(key);
       return true;
