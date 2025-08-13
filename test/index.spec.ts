@@ -1,4 +1,4 @@
-import { KeyValueCache, parseValueEntry } from "../src";
+import { CacheOptions, getCache, KeyValueCache, parseValueEntry } from "../src";
 
 type TestParams = { id: string };
 
@@ -91,20 +91,20 @@ describe("KeyValueCache", () => {
         }),
     };
 
-    return new KeyValueCache(
-      options?.prefix ?? defaultOptions.prefix,
-      options?.evictionMillis ?? defaultOptions.evictionMillis,
-      options?.maxEntries ?? defaultOptions.maxEntries,
-      options?.maxCacheSize ?? defaultOptions.maxCacheSize,
-      options?.getValueForKey ?? defaultOptions.getValueForKey,
-      options?.setValueForKey ?? defaultOptions.setValueForKey,
-      options?.deleteKeyValue ?? defaultOptions.deleteKeyValue,
-      options?.getAllKeys ?? defaultOptions.getAllKeys,
-      options?.getKeyFor ?? defaultOptions.getKeyFor,
-      options?.fileExists ?? defaultOptions.fileExists,
-      options?.fileUnlink ?? defaultOptions.fileUnlink,
-      options?.fileSize ?? defaultOptions.fileSize
-    );
+    return getCache({
+      prefix: options?.prefix ?? defaultOptions.prefix,
+      evictionMillis: options?.evictionMillis ?? defaultOptions.evictionMillis,
+      maxEntries: options?.maxEntries ?? defaultOptions.maxEntries,
+      maxCacheSize: options?.maxCacheSize ?? defaultOptions.maxCacheSize,
+      getValue: options?.getValue ?? defaultOptions.getValueForKey,
+      setValue: options?.setValue ?? defaultOptions.setValueForKey,
+      delete: options?.delete ?? defaultOptions.deleteKeyValue,
+      getAllKeys: options?.getAllKeys ?? defaultOptions.getAllKeys,
+      getKeyFor: options?.getKeyFor ?? defaultOptions.getKeyFor,
+      fileExists: options?.fileExists ?? defaultOptions.fileExists,
+      fileUnlink: options?.fileUnlink ?? defaultOptions.fileUnlink,
+      fileSize: options?.fileSize ?? defaultOptions.fileSize,
+    });
   }
 
   let cache: KeyValueCache<TestParams>;
@@ -486,7 +486,7 @@ describe("KeyValueCache", () => {
       return Promise.resolve(result);
     });
 
-    const newCache = getDefaultCache({ getAllKeys, getValueForKey }); // starts boot
+    const newCache = getDefaultCache({ getAllKeys, getValue: getValueForKey }); // starts boot
     const cleanExpiredEntriesPromise = newCache.cleanExpiredEntries();
 
     signalResolve();
@@ -510,7 +510,7 @@ describe("KeyValueCache", () => {
       .mockImplementation(async (_key: string): Promise<boolean> => {
         return Promise.resolve(false);
       });
-    const newCache = getDefaultCache({ deleteKeyValue });
+    const newCache = getDefaultCache({ delete: deleteKeyValue });
     const entriesCount = await newCache.getCurrentEntriesCount();
 
     const result = await newCache.cleanExpiredEntries();
@@ -723,17 +723,4 @@ describe("parseValueEntry", () => {
   });
 });
 
-interface TestCacheOptions<TKeyParams> {
-  prefix?: string;
-  evictionMillis?: number;
-  maxEntries?: number;
-  maxCacheSize?: number;
-  getValueForKey?: (key: string) => Promise<string | null>;
-  setValueForKey?: (key: string, value: string) => Promise<boolean>;
-  deleteKeyValue?: (key: string) => Promise<boolean>;
-  getAllKeys?: () => Promise<string[]>;
-  getKeyFor?: (params: TKeyParams) => Promise<string | null>;
-  fileExists?: (path: string) => Promise<boolean>;
-  fileUnlink?: (path: string) => Promise<boolean>;
-  fileSize?: (path: string) => Promise<number>;
-}
+type TestCacheOptions<TKeyParams> = Partial<CacheOptions<TKeyParams>>;

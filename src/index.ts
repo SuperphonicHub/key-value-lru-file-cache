@@ -3,6 +3,51 @@ interface ValueEntry {
   lastAccessed: number;
 }
 
+export interface CacheOptions<TKeyParams> {
+  prefix: string;
+  evictionMillis: number;
+  maxEntries: number;
+  maxCacheSize: number;
+  getValue: (key: string) => Promise<string | null>;
+  setValue: (key: string, value: string) => Promise<boolean>;
+  delete: (key: string) => Promise<boolean>;
+  getAllKeys: () => Promise<string[]>;
+  getKeyFor: (params: TKeyParams) => Promise<string | null>;
+  fileExists: (path: string) => Promise<boolean>;
+  fileUnlink: (path: string) => Promise<boolean>;
+  fileSize: (path: string) => Promise<number>;
+}
+
+export function getCache<TKeyParams>(
+  options: CacheOptions<TKeyParams>
+): KeyValueCache<TKeyParams> {
+  const cache = new Cache<TKeyParams>(
+    options.prefix,
+    options.evictionMillis,
+    options.maxEntries,
+    options.maxCacheSize,
+    options.getValue,
+    options.setValue,
+    options.delete,
+    options.getAllKeys,
+    options.getKeyFor,
+    options.fileExists,
+    options.fileUnlink,
+    options.fileSize
+  );
+  return wrapWithInit(cache, cache.ensureBooted.bind(cache));
+}
+
+export interface KeyValueCache<TKeyParams> {
+  get: (params: TKeyParams) => Promise<string | null>;
+  put: (params: TKeyParams, filePath: string) => Promise<boolean>;
+  delete: (params: TKeyParams) => Promise<boolean>;
+  cleanExpiredEntries: () => Promise<boolean>;
+  getCurrentEntriesCount: () => Promise<number>;
+  getCurrentDiskSize: () => Promise<number>;
+  ensureBooted: () => Promise<void>;
+}
+
 /**
  * KeyValue Cache: This is the class that is used to store and retrieve values from the cache.
  * @param prefix - The prefix to use for the keys.
@@ -22,7 +67,7 @@ interface ValueEntry {
  *
  * @template TKeyParams - The type of the key parameters.
  */
-export class KeyValueCache<TKeyParams> {
+class Cache<TKeyParams> implements KeyValueCache<TKeyParams> {
   private entriesCount: number = 0;
   private diskSize: number = 0;
   private bootPromise: Promise<void>;
@@ -48,6 +93,12 @@ export class KeyValueCache<TKeyParams> {
     this.bootPromise = this.boot();
   }
 
+  async ensureBooted(): Promise<void> {
+    if (!this.isBooted) {
+      await this.bootPromise;
+    }
+  }
+
   private async boot() {
     const setCount = async () => {
       const count = await this.getOurKeysCount();
@@ -71,7 +122,6 @@ export class KeyValueCache<TKeyParams> {
    * @returns A promise that resolves to the value for the given key params or null if the value can't be retrieved.
    */
   async get(params: TKeyParams) {
-    await this.ensureBooted();
     const key = await this._getKeyFor(params);
 
     if (!key) {
@@ -136,7 +186,6 @@ export class KeyValueCache<TKeyParams> {
    * @returns A promise that resolves to a boolean indicating if the value was put.
    */
   async put(params: TKeyParams, filePath: string) {
-    await this.ensureBooted();
     const key = await this._getKeyFor(params);
 
     if (!key) {
@@ -180,7 +229,6 @@ export class KeyValueCache<TKeyParams> {
    * @returns A promise that resolves to a boolean indicating if the value was deleted.
    */
   async delete(params: TKeyParams) {
-    await this.ensureBooted();
     const key = await this._getKeyFor(params);
 
     if (!key) {
@@ -220,7 +268,6 @@ export class KeyValueCache<TKeyParams> {
    * @returns A promise that resolves to a boolean indicating if any entries were cleaned up.
    */
   async cleanExpiredEntries(): Promise<boolean> {
-    await this.ensureBooted();
     const ourKeyValues = await this.getAllByOldestFirst();
     const evictionThreshold = Date.now() - this._evictionMillis;
     const promises: Promise<boolean>[] = [];
@@ -234,7 +281,7 @@ export class KeyValueCache<TKeyParams> {
   }
 
   private async cleanUpCount() {
-    await this.ensureBooted();
+    await this.ensureBooted(); //Needed in a private method, because it's not wrapped with wrapWithInit.
     const countToClean = this.entriesCount - this._maxEntries;
 
     if (countToClean <= 0) {
@@ -254,17 +301,18 @@ export class KeyValueCache<TKeyParams> {
   }
 
   async getCurrentEntriesCount() {
-    await this.ensureBooted();
-    return this.entriesCount;
+    // We use Promise.resolve so the method is async, and wrapWithInit can wrap it.
+    return await Promise.resolve(this.entriesCount);
   }
 
   async getCurrentDiskSize() {
-    await this.ensureBooted();
-    return this.diskSize;
+    // We use Promise.resolve so the method is async, and wrapWithInit can wrap it.
+    return await Promise.resolve(this.diskSize);
   }
 
   private async cleanUpDiskSize() {
-    await this.ensureBooted();
+    await this.ensureBooted(); //Needed in a private method, because it's not wrapped with wrapWithInit.
+
     const sizeToClean = this.diskSize - this._maxCacheSize;
 
     if (sizeToClean <= 0) {
@@ -288,6 +336,8 @@ export class KeyValueCache<TKeyParams> {
     evictionThreshold: number,
     valueEntry: ValueEntry
   ): Promise<boolean> {
+    await this.ensureBooted(); //Needed in a private method, because it's not wrapped with wrapWithInit.
+
     if (valueEntry.lastAccessed < evictionThreshold) {
       const { filePath } = valueEntry;
 
@@ -408,12 +458,38 @@ export class KeyValueCache<TKeyParams> {
       }
     }
   }
+}
 
-  private async ensureBooted(): Promise<void> {
-    if (!this.isBooted) {
-      await this.bootPromise;
-    }
+// Ensures every method is wrapped with ensureBooted.
+function wrapWithInit<T extends object>(
+  target: T,
+  ensureInitialized: () => Promise<void>
+): T {
+  return new Proxy(target, {
+    get(obj, prop, receiver) {
+      const val = Reflect.get(obj, prop, receiver);
+      if (typeof val === "function" && !prop.toString().startsWith("_")) {
+        return async function (...args: any[]) {
+          await ensureInitialized.call(obj);
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+          return val.apply(obj, args);
+        };
+      }
+      return val;
+    },
+  });
+}
+
+// Validates and parses the value entry.
+export function parseValueEntry(json: string): ValueEntry {
+  let data: unknown;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    throw new Error("Invalid JSON");
   }
+  assertValueEntry(data);
+  return data;
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -443,15 +519,4 @@ function assertValueEntry(v: unknown): asserts v is ValueEntry {
   ) {
     throw new Error("lastAccessed must be a positive integer");
   }
-}
-
-export function parseValueEntry(json: string): ValueEntry {
-  let data: unknown;
-  try {
-    data = JSON.parse(json);
-  } catch {
-    throw new Error("Invalid JSON");
-  }
-  assertValueEntry(data);
-  return data;
 }
