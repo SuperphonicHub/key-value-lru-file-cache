@@ -1,11 +1,7 @@
-import z from "zod";
-
-const zodValueEntry = z.object({
-  filePath: z.string(),
-  lastAccessed: z.number().int().positive(),
-});
-
-type ValueEntry = z.infer<typeof zodValueEntry>;
+interface ValueEntry {
+  filePath: string;
+  lastAccessed: number;
+}
 
 /**
  * KeyValue Cache Adapter
@@ -97,7 +93,7 @@ export class KeyValueCache<TKeyParams> {
 
     let valueEntry: ValueEntry;
     try {
-      valueEntry = zodValueEntry.parse(JSON.parse(value));
+      valueEntry = parseValueEntry(value);
     } catch (err) {
       const isDeleted = await this.adapter.deleteKeyValue(key);
       if (isDeleted) {
@@ -215,13 +211,8 @@ export class KeyValueCache<TKeyParams> {
 
     this.safeDecrementEntriesCount();
 
-    if (!value) {
-      return true;
-      // We can't decrement the diskSize because the value is falsy.
-    }
-
     try {
-      const { filePath } = zodValueEntry.parse(JSON.parse(value));
+      const { filePath } = parseValueEntry(value);
       await this.tryDecrementDiskSize(filePath);
     } catch (err) {
       // Do nothing
@@ -345,7 +336,7 @@ export class KeyValueCache<TKeyParams> {
 
       let valueEntry: ValueEntry;
       try {
-        valueEntry = zodValueEntry.parse(JSON.parse(value));
+        valueEntry = parseValueEntry(value);
       } catch (err) {
         const isDeleted = await this.adapter.deleteKeyValue(key);
         if (isDeleted) {
@@ -381,7 +372,7 @@ export class KeyValueCache<TKeyParams> {
           return null;
         }
         try {
-          const valueEntry = zodValueEntry.parse(JSON.parse(value));
+          const valueEntry = parseValueEntry(value);
           return { key, valueEntry };
         } catch (err) {
           const isDeleted = await this.adapter.deleteKeyValue(key);
@@ -433,4 +424,44 @@ export class KeyValueCache<TKeyParams> {
       await this.bootPromise;
     }
   }
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    Object.getPrototypeOf(v) === Object.prototype
+  );
+}
+
+function assertValueEntry(v: unknown): asserts v is ValueEntry {
+  if (!isPlainObject(v)) {
+    throw new Error("Expected an object");
+  }
+
+  const { filePath, lastAccessed } = v;
+
+  if (typeof filePath !== "string" || filePath.length === 0) {
+    throw new Error("filePath must be a non-empty string");
+  }
+
+  if (
+    typeof lastAccessed !== "number" ||
+    !Number.isFinite(lastAccessed) ||
+    !Number.isInteger(lastAccessed) ||
+    lastAccessed <= 0
+  ) {
+    throw new Error("lastAccessed must be a positive integer");
+  }
+}
+
+export function parseValueEntry(json: string): ValueEntry {
+  let data: unknown;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    throw new Error("Invalid JSON");
+  }
+  assertValueEntry(data);
+  return data;
 }

@@ -1,4 +1,4 @@
-import { KeyValueCache, KeyValueCacheAdapter } from "../src";
+import { KeyValueCache, KeyValueCacheAdapter, parseValueEntry } from "../src";
 
 type TestParams = { id: string };
 
@@ -558,5 +558,119 @@ describe("KeyValueCache", () => {
 
     expect(dictionary[keyNoFile]).toBeUndefined(); // The inexistent file gets deleted.
     expect(dictionary[key]).toBeDefined();
+  });
+
+  it("cleanExpiredEntries removes invalid JSON", async () => {
+    const value = "INVALID_JSON";
+    const key = `${MOCK_PREFIX}:TheKey`;
+    dictionary[key] = value;
+
+    const result = await cache.cleanExpiredEntries();
+
+    expect(result).toBe(false);
+    expect(await cache.getCurrentEntriesCount()).toBe(0);
+    expect(await cache.getCurrentDiskSize()).toBe(0);
+  });
+
+  it("cleanExpiredEntries skips empty value", async () => {
+    const key = `${MOCK_PREFIX}:TheKey`;
+    dictionary[key] = "";
+
+    const result = await cache.cleanExpiredEntries();
+
+    expect(result).toBe(false);
+    expect(await cache.getCurrentEntriesCount()).toBe(0);
+    expect(await cache.getCurrentDiskSize()).toBe(0);
+  });
+
+  it("getOurDiskSize removes invalid JSON", async () => {
+    const value = "INVALID_JSON";
+    const key = `${MOCK_PREFIX}:TheKey`;
+    dictionary[key] = value;
+
+    // Instantiating the cache calls getOurDiskSize
+    const newCache = new KeyValueCache(adapter);
+
+    expect(await newCache.getCurrentEntriesCount()).toBe(0);
+    expect(await newCache.getCurrentDiskSize()).toBe(0);
+  });
+
+  it("getOurDiskSize skips empty value", async () => {
+    const key = `${MOCK_PREFIX}:TheKey`;
+    dictionary[key] = "";
+
+    // Instantiating the cache calls getOurDiskSize
+    const newCache = new KeyValueCache(adapter);
+
+    expect(await newCache.getCurrentEntriesCount()).toBe(1);
+    expect(await newCache.getCurrentDiskSize()).toBe(0);
+  });
+});
+
+describe("parseValueEntry", () => {
+  const validJson = JSON.stringify({
+    filePath: "/tmp/file",
+    lastAccessed: 123456,
+  });
+
+  it("parses valid JSON and returns a ValueEntry", () => {
+    const result = parseValueEntry(validJson);
+    expect(result).toEqual({
+      filePath: "/tmp/file",
+      lastAccessed: 123456,
+    });
+  });
+
+  it("throws on invalid JSON", () => {
+    expect(() => parseValueEntry("{not valid json")).toThrow("Invalid JSON");
+  });
+
+  it("throws if not an object", () => {
+    expect(() => parseValueEntry("123")).toThrow("Expected an object");
+    expect(() => parseValueEntry('"string"')).toThrow("Expected an object");
+    expect(() => parseValueEntry("null")).toThrow("Expected an object");
+  });
+
+  it("throws if filePath is missing or not a non-empty string", () => {
+    expect(() => parseValueEntry(JSON.stringify({ lastAccessed: 1 }))).toThrow(
+      "filePath must be a non-empty string"
+    );
+    expect(() =>
+      parseValueEntry(JSON.stringify({ filePath: "", lastAccessed: 1 }))
+    ).toThrow("filePath must be a non-empty string");
+    expect(() =>
+      parseValueEntry(JSON.stringify({ filePath: 123, lastAccessed: 1 }))
+    ).toThrow("filePath must be a non-empty string");
+  });
+
+  it("throws if lastAccessed is missing or not a positive integer", () => {
+    expect(() =>
+      parseValueEntry(JSON.stringify({ filePath: "/tmp/file" }))
+    ).toThrow("lastAccessed must be a positive integer");
+    expect(() =>
+      parseValueEntry(
+        JSON.stringify({ filePath: "/tmp/file", lastAccessed: "abc" })
+      )
+    ).toThrow("lastAccessed must be a positive integer");
+    expect(() =>
+      parseValueEntry(
+        JSON.stringify({ filePath: "/tmp/file", lastAccessed: 0 })
+      )
+    ).toThrow("lastAccessed must be a positive integer");
+    expect(() =>
+      parseValueEntry(
+        JSON.stringify({ filePath: "/tmp/file", lastAccessed: -1 })
+      )
+    ).toThrow("lastAccessed must be a positive integer");
+    expect(() =>
+      parseValueEntry(
+        JSON.stringify({ filePath: "/tmp/file", lastAccessed: 1.5 })
+      )
+    ).toThrow("lastAccessed must be a positive integer");
+    expect(() =>
+      parseValueEntry(
+        JSON.stringify({ filePath: "/tmp/file", lastAccessed: Infinity })
+      )
+    ).toThrow("lastAccessed must be a positive integer");
   });
 });
