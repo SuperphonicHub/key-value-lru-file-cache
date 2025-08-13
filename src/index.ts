@@ -4,51 +4,21 @@ interface ValueEntry {
 }
 
 /**
- * KeyValue Cache Adapter
+ * KeyValue Cache: This is the class that is used to store and retrieve values from the cache.
+ * @param prefix - The prefix to use for the keys.
+ * @param evictionMillis - The time in milliseconds after which an entry is considered expired.
+ * @param maxEntries - The maximum number of entries to store in the cache.
+ * @param maxCacheSize - The maximum size of the cache in bytes.
  *
- * This is the interface that the KeyValueCache class uses to interact with the underlying storage.
+ * @param getValue - Get the value for a given key.
+ * @param setValue - Set the value for a given key.
+ * @param delete - Delete the key/value for a given key.
+ * @param getAllKeys - Get all the keys in the cache.
+ * @param getKeyFor - Get the key for a given key parameters.
  *
- * @field prefix - The prefix to use for the keys.
- * @field evictionMillis - The time in milliseconds after which an entry is considered expired.
- * @field maxEntries - The maximum number of entries to store in the cache.
- * @field maxCacheSize - The maximum size of the cache in bytes.
- *
- * @field getValueForKey - Get the value for a given key.
- * @field setValueForKey - Set the value for a given key.
- * @field deleteKeyValue - Delete the value for a given key.
- * @field getAllKeys - Get all the keys in the cache.
- * @field getKeyFor - Get the key for a given key parameters.
- *
- * @field fileExists - Check if a file exists.
- * @field fileUnlink - Unlink a file.
- * @field fileSize - Get the size of a file.
- *
- * @template TKeyParams - The type of the key parameters.
- */
-export interface KeyValueCacheAdapter<TKeyParams> {
-  // Props
-  prefix: string;
-  evictionMillis: number;
-  maxEntries: number;
-  maxCacheSize: number;
-
-  // KeyValue Adapter
-  getValueForKey(key: string): Promise<string | null>;
-  setValueForKey(key: string, value: string): Promise<boolean>;
-  deleteKeyValue(key: string): Promise<boolean>;
-  getAllKeys(): Promise<string[]>;
-  getKeyFor(params: TKeyParams): Promise<string | null>;
-
-  // File System Adapter
-  fileExists(path: string): Promise<boolean>;
-  fileUnlink(path: string): Promise<boolean>;
-  fileSize(path: string): Promise<number>;
-}
-
-/**
- * KeyValue Cache
- *
- * This is the class that is used to store and retrieve values from the cache.
+ * @param fileExists - Check if a file exists.
+ * @param fileUnlink - Unlink a file.
+ * @param fileSize - Get the size of a file.
  *
  * @template TKeyParams - The type of the key parameters.
  */
@@ -58,17 +28,40 @@ export class KeyValueCache<TKeyParams> {
   private bootPromise: Promise<void>;
   private isBooted: boolean = false;
 
-  constructor(private adapter: KeyValueCacheAdapter<TKeyParams>) {
-    this.bootPromise = Promise.all([
-      this.getOurKeysCount().then(count => {
-        this.entriesCount = count;
-      }),
-      this.getOurDiskSize().then(size => {
-        this.diskSize = size;
-      }),
-    ]).then(() => {
-      this.isBooted = true;
-    });
+  constructor(
+    private readonly _prefix: string,
+    private readonly _evictionMillis: number,
+    private readonly _maxEntries: number,
+    private readonly _maxCacheSize: number,
+    private readonly _getValue: (key: string) => Promise<string | null>,
+    private readonly _setValue: (
+      key: string,
+      value: string
+    ) => Promise<boolean>,
+    private readonly _delete: (key: string) => Promise<boolean>,
+    private readonly _getAllKeys: () => Promise<string[]>,
+    private readonly _getKeyFor: (params: TKeyParams) => Promise<string | null>,
+    private readonly _fileExists: (path: string) => Promise<boolean>,
+    private readonly _fileUnlink: (path: string) => Promise<boolean>,
+    private readonly _fileSize: (path: string) => Promise<number>
+  ) {
+    this.bootPromise = this.boot();
+  }
+
+  private async boot() {
+    const setCount = async () => {
+      const count = await this.getOurKeysCount();
+      this.entriesCount = count;
+    };
+
+    const setSize = async () => {
+      const size = await this.getOurDiskSize();
+      this.diskSize = size;
+    };
+
+    await Promise.all([setCount(), setSize()]);
+
+    this.isBooted = true;
   }
 
   /**
@@ -79,13 +72,13 @@ export class KeyValueCache<TKeyParams> {
    */
   async get(params: TKeyParams) {
     await this.ensureBooted();
-    const key = await this.adapter.getKeyFor(params);
+    const key = await this._getKeyFor(params);
 
     if (!key) {
       return null;
     }
 
-    const value = await this.adapter.getValueForKey(key);
+    const value = await this._getValue(key);
 
     if (!value) {
       return null;
@@ -95,7 +88,7 @@ export class KeyValueCache<TKeyParams> {
     try {
       valueEntry = parseValueEntry(value);
     } catch (err) {
-      const isDeleted = await this.adapter.deleteKeyValue(key);
+      const isDeleted = await this._delete(key);
       if (isDeleted) {
         this.safeDecrementEntriesCount();
       }
@@ -104,10 +97,10 @@ export class KeyValueCache<TKeyParams> {
       return null;
     }
 
-    const exists = await this.adapter.fileExists(valueEntry.filePath);
+    const exists = await this._fileExists(valueEntry.filePath);
 
     if (!exists) {
-      const isDeleted = await this.adapter.deleteKeyValue(key);
+      const isDeleted = await this._delete(key);
       if (isDeleted) {
         this.safeDecrementEntriesCount();
       }
@@ -116,7 +109,7 @@ export class KeyValueCache<TKeyParams> {
       return null;
     }
 
-    const evictionThreshold = Date.now() - this.adapter.evictionMillis;
+    const evictionThreshold = Date.now() - this._evictionMillis;
     const cleaned = await this.cleanExpiredEntry(
       key,
       evictionThreshold,
@@ -130,7 +123,7 @@ export class KeyValueCache<TKeyParams> {
     valueEntry.lastAccessed = Date.now();
 
     // No need to increment entriesCount or diskSize here, because we're just updating lastAccessed.
-    await this.adapter.setValueForKey(key, JSON.stringify(valueEntry));
+    await this._setValue(key, JSON.stringify(valueEntry));
 
     return valueEntry.filePath;
   }
@@ -144,7 +137,7 @@ export class KeyValueCache<TKeyParams> {
    */
   async put(params: TKeyParams, filePath: string) {
     await this.ensureBooted();
-    const key = await this.adapter.getKeyFor(params);
+    const key = await this._getKeyFor(params);
 
     if (!key) {
       return false;
@@ -155,10 +148,7 @@ export class KeyValueCache<TKeyParams> {
       lastAccessed: Date.now(),
     };
 
-    const isSet = await this.adapter.setValueForKey(
-      key,
-      JSON.stringify(newEntry)
-    );
+    const isSet = await this._setValue(key, JSON.stringify(newEntry));
 
     if (!isSet) {
       return false;
@@ -166,17 +156,17 @@ export class KeyValueCache<TKeyParams> {
 
     this.entriesCount++;
 
-    const exists = await this.adapter.fileExists(filePath);
+    const exists = await this._fileExists(filePath);
     if (exists) {
-      const fileSize = await this.adapter.fileSize(filePath);
+      const fileSize = await this._fileSize(filePath);
       this.diskSize += fileSize;
     }
 
-    if (this.entriesCount >= this.adapter.maxEntries) {
+    if (this.entriesCount >= this._maxEntries) {
       await this.cleanUpCount();
     }
 
-    if (this.diskSize >= this.adapter.maxCacheSize) {
+    if (this.diskSize >= this._maxCacheSize) {
       await this.cleanUpDiskSize();
     }
 
@@ -191,19 +181,19 @@ export class KeyValueCache<TKeyParams> {
    */
   async delete(params: TKeyParams) {
     await this.ensureBooted();
-    const key = await this.adapter.getKeyFor(params);
+    const key = await this._getKeyFor(params);
 
     if (!key) {
       return false;
     }
 
-    const value = await this.adapter.getValueForKey(key);
+    const value = await this._getValue(key);
 
     if (!value) {
       return false;
     }
 
-    const isDeleted = await this.adapter.deleteKeyValue(key);
+    const isDeleted = await this._delete(key);
 
     if (!isDeleted) {
       return false;
@@ -232,7 +222,7 @@ export class KeyValueCache<TKeyParams> {
   async cleanExpiredEntries(): Promise<boolean> {
     await this.ensureBooted();
     const ourKeyValues = await this.getAllByOldestFirst();
-    const evictionThreshold = Date.now() - this.adapter.evictionMillis;
+    const evictionThreshold = Date.now() - this._evictionMillis;
     const promises: Promise<boolean>[] = [];
 
     for (const { key, valueEntry } of ourKeyValues) {
@@ -245,17 +235,17 @@ export class KeyValueCache<TKeyParams> {
 
   private async cleanUpCount() {
     await this.ensureBooted();
-    const countToClean = this.entriesCount - this.adapter.maxEntries;
+    const countToClean = this.entriesCount - this._maxEntries;
 
     if (countToClean <= 0) {
       return;
     }
 
     const ourKeyValues = await this.getAllByOldestFirst();
-    const evictionThreshold = Date.now() - this.adapter.evictionMillis;
+    const evictionThreshold = Date.now() - this._evictionMillis;
 
     for (const { key, valueEntry } of ourKeyValues) {
-      if (this.entriesCount <= this.adapter.maxEntries) {
+      if (this.entriesCount <= this._maxEntries) {
         break;
       }
 
@@ -275,17 +265,17 @@ export class KeyValueCache<TKeyParams> {
 
   private async cleanUpDiskSize() {
     await this.ensureBooted();
-    const sizeToClean = this.diskSize - this.adapter.maxCacheSize;
+    const sizeToClean = this.diskSize - this._maxCacheSize;
 
     if (sizeToClean <= 0) {
       return;
     }
 
     const ourKeyValues = await this.getAllByOldestFirst();
-    const evictionThreshold = Date.now() - this.adapter.evictionMillis;
+    const evictionThreshold = Date.now() - this._evictionMillis;
 
     for (const { key, valueEntry } of ourKeyValues) {
-      if (this.diskSize <= this.adapter.maxCacheSize) {
+      if (this.diskSize <= this._maxCacheSize) {
         break;
       }
 
@@ -301,7 +291,7 @@ export class KeyValueCache<TKeyParams> {
     if (valueEntry.lastAccessed < evictionThreshold) {
       const { filePath } = valueEntry;
 
-      const isDeleted = await this.adapter.deleteKeyValue(key);
+      const isDeleted = await this._delete(key);
 
       if (!isDeleted) {
         return false;
@@ -316,8 +306,8 @@ export class KeyValueCache<TKeyParams> {
   }
 
   private async getOurKeys() {
-    const allKeys = await this.adapter.getAllKeys();
-    return allKeys.filter(key => key.startsWith(this.adapter.prefix));
+    const allKeys = await this._getAllKeys();
+    return allKeys.filter(key => key.startsWith(this._prefix));
   }
 
   private async getOurKeysCount() {
@@ -328,7 +318,7 @@ export class KeyValueCache<TKeyParams> {
     const ourKeys = await this.getOurKeys();
     let totalSize = 0;
     for (const key of ourKeys) {
-      const value = await this.adapter.getValueForKey(key);
+      const value = await this._getValue(key);
 
       if (!value) {
         continue;
@@ -338,7 +328,7 @@ export class KeyValueCache<TKeyParams> {
       try {
         valueEntry = parseValueEntry(value);
       } catch (err) {
-        const isDeleted = await this.adapter.deleteKeyValue(key);
+        const isDeleted = await this._delete(key);
         if (isDeleted) {
           this.safeDecrementEntriesCount();
         }
@@ -346,11 +336,11 @@ export class KeyValueCache<TKeyParams> {
         continue;
       }
 
-      const exists = await this.adapter.fileExists(valueEntry.filePath);
+      const exists = await this._fileExists(valueEntry.filePath);
       if (exists) {
-        totalSize += await this.adapter.fileSize(valueEntry.filePath);
+        totalSize += await this._fileSize(valueEntry.filePath);
       } else {
-        const isDeleted = await this.adapter.deleteKeyValue(key);
+        const isDeleted = await this._delete(key);
         if (isDeleted) {
           this.safeDecrementEntriesCount();
         }
@@ -367,7 +357,7 @@ export class KeyValueCache<TKeyParams> {
 
     const allKeyValues = await Promise.all(
       ourKeys.map(async key => {
-        const value = await this.adapter.getValueForKey(key);
+        const value = await this._getValue(key);
         if (!value) {
           return null;
         }
@@ -375,7 +365,7 @@ export class KeyValueCache<TKeyParams> {
           const valueEntry = parseValueEntry(value);
           return { key, valueEntry };
         } catch (err) {
-          const isDeleted = await this.adapter.deleteKeyValue(key);
+          const isDeleted = await this._delete(key);
           if (isDeleted) {
             this.safeDecrementEntriesCount();
           }
@@ -409,10 +399,10 @@ export class KeyValueCache<TKeyParams> {
   }
 
   private async tryDecrementDiskSize(filePath: string) {
-    const exists = await this.adapter.fileExists(filePath);
+    const exists = await this._fileExists(filePath);
     if (exists) {
-      const fileSize = await this.adapter.fileSize(filePath);
-      const isUnlinked = await this.adapter.fileUnlink(filePath);
+      const fileSize = await this._fileSize(filePath);
+      const isUnlinked = await this._fileUnlink(filePath);
       if (isUnlinked) {
         this.safeDecrementDiskSize(fileSize);
       }
